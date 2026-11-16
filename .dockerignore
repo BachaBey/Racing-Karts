@@ -1,0 +1,7 @@
+__pycache__
+data
+client
+tools
+docs
+*.pdf
+client_settings.json

@@ -1,0 +1,17 @@
+[Unit]
+Description=Turbo Kart Arena game server (TCP @TCP@ / UDP @UDP@)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=kart
+WorkingDirectory=/opt/kartarena
+ExecStart=/usr/bin/python3 -u /opt/kartarena/run_server.py --tcp @TCP@ --udp @UDP@ --name "Turbo Kart Arena (cloud)" --data /opt/kartarena/data
+Restart=on-failure
+RestartSec=2
+KillSignal=SIGTERM
+NoNewPrivileges=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
