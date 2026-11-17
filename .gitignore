@@ -6,3 +6,4 @@ build/
 *.spec
 *.pdf
 selftest.log
+!docs/Networking_Report.pdf
