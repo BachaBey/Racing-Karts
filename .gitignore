@@ -5,3 +5,4 @@ client_settings.json
 build/
 *.spec
 *.pdf
+selftest.log
