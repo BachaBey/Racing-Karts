@@ -141,11 +141,22 @@ class SpriteBank:
         w = max(2, int(w))
         if w > 600:
             w = 600
+        # bucket the width (finer when small) so the cache is reused across frames
+        if w > 160:
+            w = w // 8 * 8
+        elif w > 60:
+            w = w // 4 * 4
+        elif w > 24:
+            w = w // 2 * 2
         ck = (key, w)
         out = self._scaled.get(ck)
         if out is None:
             h = max(1, int(img.get_height() * w / img.get_width()))
-            out = pygame.transform.scale(img, (w, h))
+            # enlarging -> smooth (no blocky pixels close to the camera); shrinking -> fast
+            if w > img.get_width() * 0.9:
+                out = pygame.transform.smoothscale(img, (w, h))
+            else:
+                out = pygame.transform.scale(img, (w, h))
             if len(self._scaled) > 4000:
                 self._scaled.clear()
             self._scaled[ck] = out
@@ -212,51 +223,213 @@ class SpriteBank:
         return s
 
 
-# ---------------------------------------------------------------- scenery
+# ---------------------------------------------------------------- scenery / props / effects
+# Everything is drawn at 2x and smooth-scaled down, so edges are anti-aliased.
+
+def _aa(surf):
+    return pygame.transform.smoothscale(surf, (surf.get_width() // 2, surf.get_height() // 2))
+
+
+def _pine(shade):
+    s = pygame.Surface((140, 240), pygame.SRCALPHA)
+    pygame.draw.rect(s, (92, 60, 34), (62, 170, 16, 66))
+    pygame.draw.rect(s, (70, 44, 24), (70, 170, 8, 66))
+    layers = [(132, 196, 60), (110, 150, 40), (84, 104, 22)]
+    for i, (w, base, top) in enumerate(layers):
+        light = _shade((46, 132, 62), shade + i * 0.07)
+        dark = _shade(light, 0.68)
+        pygame.draw.polygon(s, light, [(70, top), (70 - w // 2, base), (70, base - 6)])
+        pygame.draw.polygon(s, dark, [(70, top), (70 + w // 2, base), (70, base - 6)])
+    return _aa(s)
+
+
+def _round_tree(shade):
+    s = pygame.Surface((180, 220), pygame.SRCALPHA)
+    pygame.draw.rect(s, (96, 64, 38), (80, 130, 20, 88))
+    pygame.draw.rect(s, (72, 46, 26), (90, 130, 10, 88))
+    base = _shade((58, 140, 58), shade)
+    for cx, cy, r in ((90, 92, 62), (52, 112, 42), (128, 112, 42), (90, 58, 44)):
+        pygame.draw.circle(s, _shade(base, 0.72), (cx + 6, cy + 6), r)
+        pygame.draw.circle(s, base, (cx, cy), r)
+        pygame.draw.circle(s, _shade(base, 1.22), (cx - r // 3, cy - r // 3), r // 2)
+    return _aa(s)
+
+
+def _bush():
+    s = pygame.Surface((160, 90), pygame.SRCALPHA)
+    for cx, cy, r in ((44, 58, 32), (80, 44, 40), (118, 58, 32)):
+        pygame.draw.circle(s, (44, 118, 50), (cx + 4, cy + 4), r)
+        pygame.draw.circle(s, (66, 152, 66), (cx, cy), r)
+        pygame.draw.circle(s, (98, 186, 92), (cx - r // 3, cy - r // 3), r // 2)
+    return _aa(s)
+
+
+def _cactus(h):
+    s = pygame.Surface((120, 240), pygame.SRCALPHA)
+    g, d, lt = (64, 146, 74), (44, 108, 54), (104, 186, 110)
+    top = 240 - h * 2
+
+    def limb(x, y, w, hh):
+        pygame.draw.rect(s, g, (x, y, w, hh), border_radius=w // 2)
+        pygame.draw.rect(s, d, (x + int(w * 0.6), y + 6, int(w * 0.4), hh - 12), border_radius=6)
+        pygame.draw.rect(s, lt, (x + int(w * 0.18), y + 8, max(2, int(w * 0.16)), hh - 16), border_radius=4)
+    limb(44, top, 32, 240 - top)
+    limb(10, top + 60, 22, 70)
+    pygame.draw.rect(s, g, (14, top + 118, 40, 16))
+    limb(88, top + 40, 22, 64)
+    pygame.draw.rect(s, g, (66, top + 92, 34, 16))
+    return _aa(s)
+
+
+def _rock():
+    s = pygame.Surface((160, 100), pygame.SRCALPHA)
+    pts = [(10, 96), (24, 50), (60, 18), (104, 22), (140, 52), (152, 96)]
+    pygame.draw.polygon(s, (138, 92, 64), pts)
+    pygame.draw.polygon(s, (176, 128, 92), [(24, 50), (60, 18), (104, 22), (80, 60), (40, 70)])
+    pygame.draw.polygon(s, (110, 72, 50), [(104, 22), (140, 52), (152, 96), (96, 96), (80, 60)])
+    return _aa(s)
+
+
+def _neon_pole(c):
+    s = pygame.Surface((80, 300), pygame.SRCALPHA)
+    for r, a in ((36, 30), (26, 50), (16, 90)):
+        pygame.draw.circle(s, (*c, a), (40, 24), r)
+    pygame.draw.rect(s, (36, 34, 58), (32, 24, 16, 276))
+    pygame.draw.rect(s, c, (36, 30, 8, 264))
+    pygame.draw.rect(s, (255, 255, 255), (38, 30, 3, 264))
+    pygame.draw.circle(s, (255, 255, 255), (40, 24), 10)
+    return _aa(s)
+
+
+def _tower():
+    s = pygame.Surface((180, 320), pygame.SRCALPHA)
+    pygame.draw.rect(s, (28, 26, 50), (10, 0, 160, 320))
+    pygame.draw.rect(s, (20, 18, 38), (110, 0, 60, 320))
+    for yy in range(16, 304, 22):
+        for xx in range(24, 156, 26):
+            on = (xx * 7 + yy * 13) % 5 != 0
+            col = (255, 214, 120) if on else (44, 44, 70)
+            if on and xx > 110:
+                col = (90, 210, 255)
+            pygame.draw.rect(s, col, (xx, yy, 12, 12))
+    return _aa(s)
+
+
 def scenery_sprites(theme):
-    """Returns list of (surface, world_height) variants for the theme."""
-    out = []
+    """Returns list of (surface, world_height) variants for the theme's off-track decoration."""
     if theme == "grass":
-        for shade in (0.85, 1.0, 1.15):
-            s = pygame.Surface((64, 110), pygame.SRCALPHA)
-            pygame.draw.rect(s, (110, 70, 35), (27, 70, 10, 38))
-            for i, (w, y) in enumerate(((60, 52), (50, 32), (36, 12))):
-                c = _shade((40, 150, 60), shade + i * 0.08)
-                pygame.draw.polygon(s, c, [(32, y - 14), (32 - w // 2, y + 26), (32 + w // 2, y + 26)])
-            out.append((s, 95.0))
-        b = pygame.Surface((80, 50), pygame.SRCALPHA)
-        for cx, cy, r in ((22, 30, 18), (40, 22, 22), (58, 30, 18)):
-            pygame.draw.circle(b, (60, 170, 70), (cx, cy), r)
-            pygame.draw.circle(b, (90, 200, 90), (cx - 4, cy - 5), r // 2)
-        out.append((b, 34.0))
-    elif theme == "desert":
-        for h in (90, 70):
-            s = pygame.Surface((60, 110), pygame.SRCALPHA)
-            g = (60, 150, 70)
-            pygame.draw.rect(s, g, (22, 110 - h, 16, h), border_radius=8)
-            pygame.draw.rect(s, g, (6, 50, 10, 30), border_radius=5)
-            pygame.draw.rect(s, g, (6, 72, 22, 8))
-            pygame.draw.rect(s, g, (44, 38, 10, 30), border_radius=5)
-            pygame.draw.rect(s, g, (34, 60, 20, 8))
-            pygame.draw.line(s, (90, 190, 100), (27, 112 - h), (27, 106), 2)
-            out.append((s, h * 1.0))
-        r = pygame.Surface((80, 50), pygame.SRCALPHA)
-        pygame.draw.ellipse(r, (150, 100, 70), (4, 10, 72, 40))
-        pygame.draw.ellipse(r, (180, 130, 90), (14, 12, 40, 20))
-        out.append((r, 40.0))
-    else:
-        for c in ((255, 60, 220), (60, 230, 255), (255, 230, 60)):
-            s = pygame.Surface((40, 140), pygame.SRCALPHA)
-            pygame.draw.rect(s, (30, 30, 50), (12, 10, 16, 130))
-            pygame.draw.rect(s, c, (16, 14, 8, 122))
-            pygame.draw.rect(s, (255, 255, 255), (18, 14, 4, 122))
-            pygame.draw.circle(s, c, (20, 10), 10)
-            out.append((s, 120.0))
-        b = pygame.Surface((90, 120), pygame.SRCALPHA)
-        pygame.draw.rect(b, (25, 25, 45), (5, 0, 80, 120))
-        for yy in range(8, 112, 16):
-            for xx in range(12, 80, 18):
-                col = (255, 220, 120) if (xx * yy) % 7 else (80, 200, 255)
-                pygame.draw.rect(b, col, (xx, yy, 8, 8))
-        out.append((b, 160.0))
-    return out
+        return [(_pine(0.9), 105.0), (_pine(1.05), 120.0), (_round_tree(1.0), 96.0),
+                (_round_tree(0.85), 84.0), (_bush(), 30.0)]
+    if theme == "desert":
+        return [(_cactus(100), 92.0), (_cactus(80), 74.0), (_rock(), 42.0), (_rock(), 30.0)]
+    return [(_neon_pole((255, 60, 220)), 130.0), (_neon_pole((60, 230, 255)), 130.0),
+            (_neon_pole((255, 220, 60)), 120.0), (_tower(), 190.0)]
+
+
+def _tyre_stack():
+    s = pygame.Surface((90, 100), pygame.SRCALPHA)
+    for i, band in enumerate(((230, 40, 40), (245, 245, 245), (230, 40, 40))):
+        y = 70 - i * 26
+        pygame.draw.ellipse(s, (22, 22, 26), (6, y, 78, 30))
+        pygame.draw.rect(s, (30, 30, 34), (6, y - 8, 78, 22))
+        pygame.draw.rect(s, band, (6, y - 2, 78, 8))
+        pygame.draw.ellipse(s, (46, 46, 52), (6, y - 20, 78, 26))
+    pygame.draw.ellipse(s, (12, 12, 14), (28, 4, 34, 12))
+    return _aa(s)
+
+
+def _cone():
+    s = pygame.Surface((60, 80), pygame.SRCALPHA)
+    pygame.draw.rect(s, (230, 90, 20), (4, 70, 52, 8), border_radius=3)
+    pygame.draw.polygon(s, (255, 120, 30), [(30, 4), (10, 72), (50, 72)])
+    pygame.draw.polygon(s, (205, 80, 20), [(30, 4), (30, 72), (50, 72)])
+    pygame.draw.polygon(s, (250, 250, 250), [(22, 32), (38, 32), (42, 46), (18, 46)])
+    return _aa(s)
+
+
+def _bale():
+    s = pygame.Surface((100, 80), pygame.SRCALPHA)
+    pygame.draw.rect(s, (214, 178, 84), (4, 10, 92, 66), border_radius=10)
+    pygame.draw.rect(s, (180, 146, 60), (60, 10, 36, 66), border_radius=10)
+    for x in range(12, 92, 10):
+        pygame.draw.line(s, (236, 206, 120), (x, 14), (x - 4, 72), 2)
+    pygame.draw.line(s, (120, 90, 40), (30, 10), (30, 76), 3)
+    pygame.draw.line(s, (120, 90, 40), (70, 10), (70, 76), 3)
+    return _aa(s)
+
+
+def _barrel():
+    s = pygame.Surface((60, 90), pygame.SRCALPHA)
+    pygame.draw.rect(s, (190, 40, 30), (6, 8, 48, 78), border_radius=8)
+    pygame.draw.rect(s, (140, 26, 20), (36, 8, 18, 78), border_radius=8)
+    for y in (24, 60):
+        pygame.draw.rect(s, (110, 20, 16), (6, y, 48, 5))
+    pygame.draw.ellipse(s, (120, 30, 24), (6, 2, 48, 14))
+    return _aa(s)
+
+
+def _bollard(c):
+    s = pygame.Surface((50, 110), pygame.SRCALPHA)
+    for r, a in ((24, 40), (16, 70)):
+        pygame.draw.circle(s, (*c, a), (25, 30), r)
+    pygame.draw.rect(s, (40, 38, 62), (15, 30, 20, 76), border_radius=6)
+    pygame.draw.rect(s, c, (15, 34, 20, 12), border_radius=4)
+    pygame.draw.rect(s, c, (15, 62, 20, 8), border_radius=3)
+    return _aa(s)
+
+
+def prop_sprites(theme):
+    """Trackside objects lining both edges: list of 2 (surface, world_height) variants."""
+    if theme == "grass":
+        return [(_tyre_stack(), 30.0), (_cone(), 18.0)]
+    if theme == "desert":
+        return [(_bale(), 24.0), (_barrel(), 26.0)]
+    return [(_bollard((255, 50, 210)), 30.0), (_bollard((50, 230, 255)), 30.0)]
+
+
+def gantry_sprite(world_width, theme):
+    """Start/finish gantry spanning the road (billboard). Returns (surface, world_height)."""
+    W = 900
+    px = W / world_width
+    H = int(110 * px)
+    s = pygame.Surface((W, H), pygame.SRCALPHA)
+    pillar = (60, 62, 72) if theme != "neon" else (40, 36, 70)
+    pw = int(10 * px)
+    for x in (0, W - pw):
+        pygame.draw.rect(s, pillar, (x, 0, pw, H))
+        pygame.draw.rect(s, _shade(pillar, 1.4), (x, 0, max(1, pw // 3), H))
+    top = int(4 * px)
+    bh = int(30 * px)
+    pygame.draw.rect(s, (20, 22, 30), (0, top, W, bh))
+    sq = max(2, bh // 4)
+    for i in range(0, W // sq + 1):
+        for j in range(2):
+            if (i + j) % 2 == 0:
+                pygame.draw.rect(s, (245, 245, 245), (i * sq, top + j * sq, sq, sq))
+                pygame.draw.rect(s, (245, 245, 245), (i * sq, top + bh - (j + 1) * sq, sq, sq))
+    accent = {"grass": (220, 40, 40), "desert": (240, 130, 30), "neon": (255, 50, 210)}.get(theme, (220, 40, 40))
+    band = pygame.Rect(int(W * 0.18), top + sq * 2 - 2, int(W * 0.64), max(8, bh - sq * 4 + 4))
+    pygame.draw.rect(s, accent, band)
+    f = pygame.font.SysFont("arialblack,impact,arial", max(10, band.h - 4), bold=True)
+    txt = f.render("TURBO KART ARENA", True, (255, 255, 255))
+    if txt.get_width() > band.w - 8:
+        txt = pygame.transform.smoothscale(txt, (band.w - 8, max(1, int(txt.get_height() * (band.w - 8) / txt.get_width()))))
+    s.blit(txt, txt.get_rect(center=band.center))
+    return s, H / px
+
+
+def shadow_sprite():
+    s = pygame.Surface((128, 40), pygame.SRCALPHA)
+    for i in range(20, 0, -1):
+        a = int(110 * (1 - i / 20) ** 0.7)
+        pygame.draw.ellipse(s, (0, 0, 0, a), pygame.Rect(64 - i * 3.2, 20 - i, i * 6.4, i * 2))
+    return s
+
+
+def soft_dot(color, size=32):
+    s = pygame.Surface((size, size), pygame.SRCALPHA)
+    r = size // 2
+    for i in range(r, 0, -1):
+        a = int(255 * (1 - i / r) ** 1.6)
+        pygame.draw.circle(s, (*color, a), (r, r), i)
+    return s

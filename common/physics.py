@@ -19,6 +19,7 @@ class KartPhysics:
         self.boost_t = 0.0
         self.hint = None
         self.on_road = True
+        self.steer = 0.0
 
     @property
     def flags_boost(self):
@@ -49,10 +50,12 @@ class KartPhysics:
             self.speed -= self.speed * 2.5 * dt
         else:
             if self.boost_t > 0:
-                self.speed = min(self.speed + 900 * dt, max_spd)
+                self.speed = min(self.speed + 1200 * dt, max_spd)
             elif throttle:
                 if self.speed < max_spd:
-                    self.speed = min(max_spd, self.speed + C.KART_ACCEL * dt)
+                    # punchy launch, tapering towards top speed
+                    curve = 1.35 - 0.75 * max(0.0, self.speed) / C.KART_MAX_SPEED
+                    self.speed = min(max_spd, self.speed + C.KART_ACCEL * curve * dt)
             elif brake:
                 if self.speed > 0:
                     self.speed = max(0.0, self.speed - C.KART_BRAKE * dt)
@@ -65,7 +68,8 @@ class KartPhysics:
                     self.speed = min(0.0, self.speed + C.KART_FRICTION * dt)
             if self.speed > max_spd:  # e.g. drove onto grass: bleed off speed smoothly
                 self.speed -= (self.speed - max_spd) * 3.0 * dt
-            grip = min(1.0, abs(self.speed) / 90.0)
+            grip = min(1.0, abs(self.speed) / 90.0) * (1.0 - 0.22 * min(1.0, abs(self.speed) / C.KART_BOOST_SPEED))
+            self.steer = steer
             direction = 1 if self.speed >= 0 else -1
             self.angle = wrap_angle(self.angle + steer * C.KART_TURN_RATE * grip * direction * dt)
 

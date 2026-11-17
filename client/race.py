@@ -1,13 +1,15 @@
 """The race scene: local simulation, UDP state streaming, snapshot interpolation,
 split-screen Mode-7 rendering and HUD."""
 import math
+import random
 import time
 
 import pygame
 
 from client import ui
 from client.render.mode7 import Mode7View, TrackArt
-from client.render.sprites import KART_GROUND_Y, KART_WORLD, SpriteBank, scenery_sprites
+from client.render.sprites import (KART_GROUND_Y, KART_WORLD, SpriteBank, gantry_sprite, prop_sprites,
+                                   scenery_sprites, shadow_sprite, soft_dot)
 from client.ui import ACCENT, ACCENT2, BAD, GOOD, MUTED, PLAYER_COLORS, TEXT, Scene
 from common import config as C
 from common import protocol as P
@@ -48,6 +50,9 @@ class LocalRacer:
         self.item_roll = 0.0
         self.view = None
         self.rect = None
+        self.fov_k = 1.0      # field-of-view factor (widens with speed)
+        self.shake = 0.0      # camera shake amplitude
+        self.emit = 0.0       # particle emission timer
 
 
 class RaceScene(Scene):
@@ -63,6 +68,12 @@ class RaceScene(Scene):
         self.art = _ART_CACHE[start["track"]]
         self.scenery_imgs = scenery_sprites(self.track.theme)
         self.scenery = self.art.track.scenery()
+        self.prop_imgs = prop_sprites(self.track.theme)
+        self.gantry_w = self.track.width + 40
+        self.gantry_img, _ = gantry_sprite(self.gantry_w, self.track.theme)
+        self.shadow_img = shadow_sprite()
+        self.particles = []
+        self._dots, self._dot_base, self._vignettes = {}, {}, {}
         self.laps = start["laps"]
         self.info = {g["pid"]: g for g in start["grid"]}
         self.sprites.prewarm({g["color"] for g in start["grid"]})   # ~0.1 s per colour, hidden by the countdown
@@ -96,11 +107,11 @@ class RaceScene(Scene):
         W, H = self.app.W, self.app.H
         if len(self.racers) <= 1:
             rects = [pygame.Rect(0, 0, W, H)]
-            internal = [(640, 360)]
+            internal = [(800, 450)]
         else:
             h = H // 2 - 2
             rects = [pygame.Rect(0, 0, W, h), pygame.Rect(0, H - h, W, h)]
-            internal = [(640, h // 2)] * 2
+            internal = [(800, int(h * 800 / W))] * 2
         for r, rect, (iw, ih) in zip(self.racers, rects, internal):
             r.rect = rect
             r.view = Mode7View(iw, ih, self.art, self.art.surface)
@@ -130,6 +141,7 @@ class RaceScene(Scene):
             if k == "spin":
                 r.kart.spin()
                 r.hit_flash = 0.6
+                r.shake = 7.0
             elif k == "boost":
                 r.kart.boost()
             elif k == "shield":
@@ -226,6 +238,7 @@ class RaceScene(Scene):
             if mine:
                 r.rank, r.lap = mine["rank"], mine["lap"]
                 r.shield = bool(mine["flags"] & P.F_SHIELD)
+        self.update_effects(dt)
 
     def interpolate(self, now):
         """Entity interpolation: render remote karts INTERP_DELAY in the past, between two snapshots."""
@@ -279,12 +292,80 @@ class RaceScene(Scene):
         latest_ids = {o["id"] for o in latest["objs"]}
         self.objs = {i: v for i, v in objs.items() if i in latest_ids}
 
+    # ------------------------------------------------------------- effects (particles)
+    DUST = {"grass": (150, 128, 96), "desert": (226, 196, 142), "neon": (130, 90, 210)}
+
+    def emit(self, x, y, z, vx, vy, vz, life, color, s0, s1):
+        if len(self.particles) < 260:
+            self.particles.append([x, y, z, vx, vy, vz, life, life, color, s0, s1])
+
+    def update_effects(self, dt):
+        rnd = random.random
+        dust = self.DUST.get(self.track.theme, (150, 128, 96))
+        for r in self.racers:
+            k = r.kart
+            spd = abs(k.speed)
+            frac = min(1.0, max(0.0, k.speed) / C.KART_BOOST_SPEED)
+            fx, fy = math.cos(k.angle), math.sin(k.angle)
+            rx, ry = -fy, fx
+            # camera: wider FOV + slight pull-back at speed, shake on boost / hit
+            target = 1.0 - 0.20 * frac - (0.06 if k.boost_t > 0 else 0.0)
+            r.fov_k += (target - r.fov_k) * min(1.0, dt * 4.0)
+            r.shake = max(r.shake * (1 - dt * 6), 0.0)
+            if k.boost_t > 0:
+                r.shake = max(r.shake, 1.6)
+            if not self.go:
+                continue
+            r.emit += dt
+            if r.emit < 1 / 45:
+                continue
+            r.emit = 0.0
+            for side in (-1, 1):   # rear wheels
+                wx = k.x - fx * 12 + rx * 11 * side
+                wy = k.y - fy * 12 + ry * 11 * side
+                if not k.on_road and spd > 40:
+                    self.emit(wx, wy, 2, -fx * spd * 0.15 + (rnd() - .5) * 40, -fy * spd * 0.15 + (rnd() - .5) * 40,
+                              18 + rnd() * 20, 0.7, dust, 10, 30)
+                elif abs(k.steer) > 0.5 and spd > C.KART_MAX_SPEED * 0.7 and rnd() < 0.7:
+                    self.emit(wx, wy, 2, (rnd() - .5) * 30, (rnd() - .5) * 30, 10 + rnd() * 10, 0.6,
+                              (215, 215, 222), 8, 26)
+            if k.boost_t > 0:
+                ex, ey = k.x - fx * 25, k.y - fy * 25
+                self.emit(ex, ey, 9, -fx * 120 + (rnd() - .5) * 50, -fy * 120 + (rnd() - .5) * 50, 10 + rnd() * 20,
+                          0.32, (255, 150 + int(rnd() * 70), 40), 7, 2)
+        alive = []
+        for p in self.particles:
+            p[6] -= dt
+            if p[6] <= 0:
+                continue
+            p[0] += p[3] * dt
+            p[1] += p[4] * dt
+            p[2] += p[5] * dt
+            p[3] *= 1 - dt * 2
+            p[4] *= 1 - dt * 2
+            alive.append(p)
+        self.particles = alive
+
+    def camera(self, r):
+        v = r.view
+        k = r.kart
+        frac = min(1.0, max(0.0, k.speed) / C.KART_BOOST_SPEED)
+        back = v.cam_back + 22 * frac
+        ca = r.cam_angle
+        cx = k.x - math.cos(ca) * back
+        cy = k.y - math.sin(ca) * back
+        if r.shake > 0.05:
+            cx += (random.random() - 0.5) * r.shake * 2
+            cy += (random.random() - 0.5) * r.shake * 2
+        v.set_focal(v.base_focal * r.fov_k)
+        return cx, cy, ca
+
     # ------------------------------------------------------------- render
     def draw(self, surf):
         surf.fill((0, 0, 0))
         for r in self.racers:
             self.draw_view(r)
-            pygame.transform.scale(r.surf, r.rect.size, surf.subsurface(r.rect))
+            pygame.transform.smoothscale(r.surf, r.rect.size, surf.subsurface(r.rect))
             self.draw_hud(surf, r)
         self.draw_minimap(surf)
         if not self.results:
@@ -295,42 +376,79 @@ class RaceScene(Scene):
             self.draw_results(surf)
         self.draw_widgets(surf)
 
+    def _vignette(self, size):
+        vg = self._vignettes.get(size)
+        if vg is None:
+            import numpy as np
+            w, h = size
+            xs = (np.arange(w) - w / 2) / (w / 2)
+            ys = (np.arange(h) - h / 2) / (h / 2)
+            d = np.sqrt(xs[:, None] ** 2 * 0.8 + ys[None, :] ** 2)
+            a = (np.clip((d - 0.62) / 0.75, 0, 1) ** 1.6 * 150).astype(np.uint8)
+            vg = pygame.Surface(size, pygame.SRCALPHA)
+            vg.fill((0, 0, 0, 255))
+            pygame.surfarray.pixels_alpha(vg)[:] = a
+            self._vignettes[size] = vg
+        return vg
+
     def draw_view(self, r):
         v = r.view
         k = r.kart
-        cx = k.x - math.cos(r.cam_angle) * v.cam_back
-        cy = k.y - math.sin(r.cam_angle) * v.cam_back
-        ca = r.cam_angle
+        cx, cy, ca = self.camera(r)
         s = r.surf
-        v.render(s, cx, cy, ca)
+        t = time.time()
+        v.render(s, cx, cy, ca, t)
         items = []
         sp = self.sprites
-        # scenery
+        proj = v.project
+        # scenery (with soft shadows)
         for (x, y, var) in self.scenery:
-            p = v.project(cx, cy, ca, x, y)
-            if p is None or p[3] > 1700:
+            p = proj(cx, cy, ca, x, y)
+            if p is None or p[3] > 1900 or p[3] < 70:   # skip objects right at the camera
                 continue
             idx = int(var * len(self.scenery_imgs)) % len(self.scenery_imgs)
             img, wh = self.scenery_imgs[idx]
-            hpx = wh * p[2]
-            w = img.get_width() * hpx / img.get_height()
-            items.append((p[3], "img", img, ("sc", idx), w, p[0], p[1], 1.0))
+            w = img.get_width() * wh * p[2] / img.get_height()
+            items.append((p[3], "img", img, ("sc", idx), w, p[0], p[1], 1.0, w * 0.8))
+        # trackside props
+        for (x, y, var) in self.art.props:
+            p = proj(cx, cy, ca, x, y)
+            if p is None or p[3] > 1300 or p[3] < 70:
+                continue
+            img, wh = self.prop_imgs[var]
+            w = img.get_width() * wh * p[2] / img.get_height()
+            items.append((p[3], "img", img, ("pr", var), w, p[0], p[1], 1.0, w * 1.1))
+        # start / finish gantry
+        gx, gy = self.art.gantry
+        p = proj(cx, cy, ca, gx, gy)
+        if p and p[3] < 2600:
+            items.append((p[3], "img", self.gantry_img, ("gantry",), self.gantry_w * p[2], p[0], p[1], 1.0, 0))
         # item boxes
-        t = time.time()
         frame = int(t * 8) % len(sp.box_frames)
         for i, (bx, by) in enumerate(self.track.box_positions):
             if not (self.boxes >> i) & 1:
                 continue
-            p = v.project(cx, cy, ca, bx, by)
+            p = proj(cx, cy, ca, bx, by)
             if p and p[3] < 1600:
-                bob = math.sin(t * 3 + i) * 3 * p[2]
-                items.append((p[3], "img", sp.box_frames[frame], ("box", frame), 40 * p[2], p[0], p[1] - bob, 0.86))
+                bob = (math.sin(t * 3 + i) * 3 + 6) * p[2]
+                items.append((p[3], "img", sp.box_frames[frame], ("box", frame), 40 * p[2], p[0], p[1] - bob, 0.86,
+                              28 * p[2]))
         # bananas / shells
         for oid, (kind, ox, oy) in self.objs.items():
-            p = v.project(cx, cy, ca, ox, oy)
+            p = proj(cx, cy, ca, ox, oy)
             if p and p[3] < 1600:
                 img = {P.OBJ_BANANA: sp.banana, P.OBJ_SHELL: sp.shell, P.OBJ_HOMING: sp.homing}[kind]
-                items.append((p[3], "img", img, ("obj", kind), 28 * p[2], p[0], p[1], 0.85))
+                items.append((p[3], "img", img, ("obj", kind), 28 * p[2], p[0], p[1], 0.85, 0))
+        # particles
+        for pt in self.particles:
+            p = proj(cx, cy, ca, pt[0], pt[1])
+            if p is None or p[3] > 1400:
+                continue
+            life = pt[6] / pt[7]
+            size = (pt[10] + (pt[9] - pt[10]) * life) * p[2]
+            if size < 1.5:
+                continue
+            items.append((p[3] - 1, "pt", pt[8], None, size, p[0], p[1] - pt[2] * p[2], life))
         # karts: remote (interpolated) + local (live state)
         karts = []
         for pid, st in self.remote.items():
@@ -338,25 +456,40 @@ class RaceScene(Scene):
                 continue
             g = self.info.get(pid, {})
             karts.append((pid, st["x"], st["y"], st["a"], g.get("color", 0), bool(st["flags"] & P.F_GHOST),
-                          bool(st["flags"] & P.F_SHIELD), g.get("name", "?"), bool(st["flags"] & P.F_BOOST)))
+                          bool(st["flags"] & P.F_SHIELD), g.get("name", "?"), bool(st["flags"] & P.F_BOOST),
+                          st.get("speed", 0.0)))
         for o in self.racers:
             karts.append((o.lp.pid, o.kart.x, o.kart.y, o.kart.angle, o.color, False, o.shield,
-                          o.lp.user if o is not r else None, o.kart.boost_t > 0))
-        for pid, x, y, a, col, ghost, shield, name, boost in karts:
-            p = v.project(cx, cy, ca, x, y)
-            if p is None or p[3] > 1800:
+                          o.lp.user if o is not r else None, o.kart.boost_t > 0, o.kart.speed))
+        own = proj(cx, cy, ca, k.x, k.y)
+        own_d = own[3] if own else 0.0
+        for pid, x, y, a, col, ghost, shield, name, boost, spd in karts:
+            p = proj(cx, cy, ca, x, y)
+            if p is None or p[3] > 1900:
                 continue
+            if pid != r.lp.pid and p[3] < own_d - 30:
+                continue   # kart behind us, between camera and player: hide it so it never covers our kart
             bearing = math.atan2(y - cy, x - cx)
             rel = wrap_angle(a - bearing)
             img = sp.kart(col, rel, ghost)
-            items.append((p[3], "kart", img, (pid, ghost), KART_WORLD * p[2], p[0], p[1], KART_GROUND_Y,
+            bounce = abs(math.sin(t * 24 + pid * 1.7)) * min(1.0, abs(spd) / C.KART_MAX_SPEED) * 0.9 * p[2]
+            items.append((p[3], "kart", img, (pid, ghost), KART_WORLD * p[2], p[0], p[1] - bounce, KART_GROUND_Y,
                           shield, name, ghost, boost, sp.frame_index(rel)))
         items.sort(key=lambda it: -it[0])
         font = ui.font(12, True)
         for it in items:
             _d, kind, img, key, w, sx, sy, gy = it[:8]
+            if kind == "pt":
+                if w < 1.5:
+                    continue
+                dot = self.dot_for(img, w, gy)
+                s.blit(dot, dot.get_rect(center=(int(sx), int(sy))))
+                continue
             if w < 2:
                 continue
+            if kind == "img" and it[8] > 3:
+                shw = sp.scaled(self.shadow_img, it[8], ("shadow",))
+                s.blit(shw, shw.get_rect(center=(int(sx), int(sy))))
             simg = sp.scaled(img, w, (key, id(img)))
             rect = simg.get_rect()
             rect.midtop = (int(sx), int(sy - rect.h * gy))
@@ -374,64 +507,159 @@ class RaceScene(Scene):
                 if name and _d < 900:
                     tag = font.render(name, True, (200, 210, 255) if ghost else TEXT)
                     s.blit(tag, tag.get_rect(midbottom=(int(sx), rect.y + rect.h * 0.15)))
+        # speed lines at high speed / boost (drawn small, smoothed by the upscale)
+        frac = max(0.0, k.speed) / C.KART_BOOST_SPEED
+        if (k.boost_t > 0 or frac > 0.72) and self.go:
+            n = 16 if k.boost_t > 0 else 7
+            W, H = s.get_size()
+            cxs, cys = W / 2, v.horizon + (H - v.horizon) * 0.35
+            diag = math.hypot(W, H) / 2
+            for _ in range(n):
+                ang = random.uniform(0, 2 * math.pi)
+                r0 = diag * random.uniform(0.55, 0.75)
+                r1 = r0 + diag * random.uniform(0.15, 0.35)
+                c = (235, 240, 255) if self.track.theme != "neon" else (120, 230, 255)
+                pygame.draw.aaline(s, c, (cxs + math.cos(ang) * r0, cys + math.sin(ang) * r0),
+                                   (cxs + math.cos(ang) * r1, cys + math.sin(ang) * r1))
+        s.blit(self._vignette(s.get_size()), (0, 0))
+
+    def dot_for(self, color, w, life):
+        """Soft particle sprite: cached per colour, size bucket and fade bucket."""
+        wb = max(2, int(w) // 3 * 3)
+        ab = max(1, int(life * 6))
+        key = (color, wb, ab)
+        d = self._dots.get(key)
+        if d is None:
+            base = self._dot_base.get(color)
+            if base is None:
+                base = soft_dot(color, 48)
+                self._dot_base[color] = base
+            d = pygame.transform.smoothscale(base, (wb, wb))
+            d.fill((255, 255, 255, int(255 * ab / 6 * 0.75)), special_flags=pygame.BLEND_RGBA_MULT)
+            if len(self._dots) > 3000:
+                self._dots.clear()
+            self._dots[key] = d
+        return d
 
     def draw_hud(self, surf, r):
         R = r.rect
         small = R.h < 500
-        sz = 0.7 if small else 1.0
+        sz = 0.68 if small else 1.0
         k = r.kart
+        now = time.time()
         # spin flash
         if r.hit_flash > 0:
             fl = pygame.Surface(R.size, pygame.SRCALPHA)
-            fl.fill((255, 40, 40, int(120 * r.hit_flash)))
+            fl.fill((255, 40, 40, int(110 * r.hit_flash)))
             surf.blit(fl, R.topleft)
-        # name + lap + timer (top-left)
-        ui.text(surf, f"P{r.lp.slot + 1}  {r.lp.user}", (R.x + 16, R.y + 10), int(18 * sz) + 2,
+        # top-left panel: name, lap, time
+        panel = pygame.Rect(R.x + 12, R.y + 10, int(210 * sz), int(112 * sz))
+        self._glass(surf, panel)
+        ui.text(surf, f"P{r.lp.slot + 1}  {r.lp.user}", (panel.x + 12, panel.y + 6), int(18 * sz) + 2,
                 PLAYER_COLORS[r.color % len(PLAYER_COLORS)], bold=True, shadow=True)
-        ui.text(surf, f"LAP {min(r.lap, self.laps)}/{self.laps}", (R.x + 16, R.y + 10 + 30 * sz), int(34 * sz),
-                TEXT, bold=True, shadow=True)
-        ui.text(surf, fmt_time(r.finish_time if r.finished else self.race_clock), (R.x + 16, R.y + 10 + 72 * sz),
-                int(24 * sz), TEXT, shadow=True)
+        ui.text(surf, f"LAP {min(r.lap, self.laps)}/{self.laps}", (panel.x + 12, panel.y + int(30 * sz)),
+                int(34 * sz), TEXT, bold=True, shadow=True)
+        ui.text(surf, fmt_time(r.finish_time if r.finished else self.race_clock),
+                (panel.x + 12, panel.y + int(74 * sz)), int(24 * sz), (230, 236, 255), shadow=True)
         # item slot (top-center)
         box = pygame.Rect(0, 0, int(88 * sz), int(88 * sz))
         box.midtop = (R.centerx, R.y + 10)
-        pygame.draw.rect(surf, (0, 0, 0), box.inflate(8, 8), border_radius=14)
-        pygame.draw.rect(surf, (250, 250, 250), box.inflate(8, 8), 3, border_radius=14)
+        self._glass(surf, box.inflate(10, 10), radius=16)
+        pygame.draw.rect(surf, (250, 250, 250), box.inflate(10, 10), 3, border_radius=16)
         item = r.item
         if r.item_roll > 0:
-            item = 1 + int(time.time() * 14) % 6
+            item = 1 + int(now * 14) % 6
         if item != C.ITEM_NONE:
             ic = pygame.transform.smoothscale(self.sprites.icons[item], (int(box.w * 0.85), int(box.h * 0.85)))
             surf.blit(ic, ic.get_rect(center=box.center))
             if r.item_roll <= 0:
                 label = C.ITEM_NAMES[r.item] + (f" x{r.item_count}" if r.item == C.ITEM_TRIPLE else "")
-                ui.text(surf, label, (box.centerx, box.bottom + 14), int(18 * sz), TEXT, bold=True, center=True,
+                ui.text(surf, label, (box.centerx, box.bottom + 16), int(18 * sz), TEXT, bold=True, center=True,
                         shadow=True)
-        # position (bottom-right)
+        # position (bottom-right), big with a coloured glow
         if r.rank:
-            col = [(255, 215, 0), (200, 210, 230), (220, 140, 60)][r.rank - 1] if r.rank <= 3 else TEXT
-            rx = R.right - (210 if len(self.racers) == 2 else 24)   # keep clear of the split-screen minimap
-            ui.text(surf, ordinal(r.rank), (rx, R.bottom - int(110 * sz)), int(84 * sz), col, bold=True,
-                    right=True, shadow=True)
-        # speed bar (bottom-left)
-        frac = max(0.0, min(1.0, abs(k.speed) / C.KART_BOOST_SPEED))
-        bar = pygame.Rect(R.x + 16, R.bottom - 34, int(220 * sz), 16)
-        pygame.draw.rect(surf, (0, 0, 0), bar.inflate(4, 4), border_radius=6)
-        pygame.draw.rect(surf, ACCENT if k.boost_t > 0 else GOOD, (bar.x, bar.y, int(bar.w * frac), bar.h),
-                         border_radius=6)
-        ui.text(surf, f"{abs(k.speed) * 0.4:.0f} km/h", (bar.right + 10, bar.y - 6), int(18 * sz), TEXT, shadow=True)
+            col = [(255, 210, 40), (210, 220, 240), (230, 150, 70)][r.rank - 1] if r.rank <= 3 else TEXT
+            rx = R.right - (210 if len(self.racers) == 2 else 28)
+            y = R.bottom - int(118 * sz)
+            ui.text(surf, ordinal(r.rank), (rx + 3, y + 4), int(92 * sz), (0, 0, 0), bold=True, right=True)
+            ui.text(surf, ordinal(r.rank), (rx, y), int(92 * sz), col, bold=True, right=True)
+        # speedometer (bottom-left)
+        self._speedo(surf, (R.x + int(92 * sz), R.bottom - int(86 * sz)), int(70 * sz), k)
         if not k.on_road and self.go and not r.finished:
-            ui.text(surf, "OFF ROAD", (R.centerx, R.bottom - 40), int(22 * sz), ACCENT, bold=True, center=True, shadow=True)
-        # countdown / finish banners
-        now = time.time()
-        if not self.go or (self.go_time and now - self.go_time < 1.0):
-            left = self.countdown_end - now
-            txt = "GO!" if self.go else (str(int(math.ceil(left))) if left > 0 else "...")
-            ui.text(surf, txt, R.center, int(120 * sz), ACCENT if self.go else TEXT, bold=True, center=True, shadow=True)
+            ui.text(surf, "OFF ROAD", (R.centerx, R.bottom - 40), int(22 * sz), ACCENT, bold=True, center=True,
+                    shadow=True)
+        # start lights + countdown
+        if not self.go or (self.go_time and now - self.go_time < 1.2):
+            self._start_lights(surf, R, sz, now)
         if r.finished and not self.results:
             ui.text(surf, f"FINISHED  {ordinal(r.finish_rank or r.rank)}!", (R.centerx, R.centery - 20),
                     int(64 * sz), ACCENT, bold=True, center=True, shadow=True)
             ui.text(surf, "waiting for the other racers...", (R.centerx, R.centery + 30), int(22 * sz), TEXT,
+                    center=True, shadow=True)
+
+    def _glass(self, surf, rect, radius=14):
+        key = ("glass", rect.size, radius)
+        g = self._vignettes.get(key)
+        if g is None:
+            g = pygame.Surface(rect.size, pygame.SRCALPHA)
+            pygame.draw.rect(g, (8, 10, 24, 120), g.get_rect(), border_radius=radius)
+            pygame.draw.rect(g, (255, 255, 255, 40), g.get_rect(), 2, border_radius=radius)
+            self._vignettes[key] = g
+        surf.blit(g, rect.topleft)
+
+    def _speedo(self, surf, center, rad, k):
+        key = ("speedo", rad)
+        dial = self._vignettes.get(key)
+        if dial is None:
+            dial = pygame.Surface((rad * 2 + 8, rad * 2 + 8), pygame.SRCALPHA)
+            c = (rad + 4, rad + 4)
+            pygame.draw.circle(dial, (8, 10, 24, 150), c, rad + 2)
+            pygame.draw.circle(dial, (255, 255, 255, 50), c, rad + 2, 2)
+            for i in range(0, 11):
+                a = math.radians(225 - i * 27)
+                r0 = rad - (12 if i % 2 == 0 else 7)
+                pygame.draw.line(dial, (230, 236, 255), (c[0] + math.cos(a) * r0, c[1] - math.sin(a) * r0),
+                                 (c[0] + math.cos(a) * (rad - 3), c[1] - math.sin(a) * (rad - 3)), 2)
+            self._vignettes[key] = dial
+        surf.blit(dial, dial.get_rect(center=center))
+        frac = max(0.0, min(1.0, abs(k.speed) / C.KART_BOOST_SPEED))
+        arc_rect = pygame.Rect(0, 0, rad * 2 - 30, rad * 2 - 30)
+        arc_rect.center = center
+        col = (255, 140, 30) if k.boost_t > 0 else (80, 220, 120) if frac < 0.66 else (255, 210, 60)
+        if frac > 0.01:
+            pygame.draw.arc(surf, col, arc_rect, math.radians(225 - 270 * frac), math.radians(225), 6)
+        a = math.radians(225 - 270 * frac)
+        pygame.draw.line(surf, (255, 70, 60), center,
+                         (center[0] + math.cos(a) * (rad - 10), center[1] - math.sin(a) * (rad - 10)), 3)
+        pygame.draw.circle(surf, (230, 230, 240), center, 5)
+        ui.text(surf, f"{abs(k.speed) * 0.5:.0f}", (center[0], center[1] + rad * 0.42), max(14, rad // 3), TEXT,
+                bold=True, center=True, shadow=True)
+        ui.text(surf, "km/h", (center[0], center[1] + rad * 0.72), max(10, rad // 6), MUTED, center=True)
+
+    def _start_lights(self, surf, R, sz, now):
+        left = self.countdown_end - now
+        lit = 0 if left > 3 else (1 if left > 2 else (2 if left > 1 else 3))
+        green = self.go
+        w, h = int(230 * sz), int(84 * sz)
+        panel = pygame.Rect(0, 0, w, h)
+        panel.center = (R.centerx, R.y + int(R.h * 0.30))
+        pygame.draw.rect(surf, (14, 14, 18), panel, border_radius=int(16 * sz))
+        pygame.draw.rect(surf, (90, 90, 100), panel, 3, border_radius=int(16 * sz))
+        for i in range(3):
+            c = (panel.x + w * (i + 1) // 4, panel.centery)
+            rr = int(24 * sz)
+            if green:
+                col = (60, 255, 110)
+            elif i < lit:
+                col = (255, 40, 40)
+            else:
+                col = (60, 20, 20)
+            if green or i < lit:
+                pygame.draw.circle(surf, tuple(v // 3 for v in col), c, rr + 6)
+            pygame.draw.circle(surf, col, c, rr)
+            pygame.draw.circle(surf, (255, 255, 255), (c[0] - rr // 3, c[1] - rr // 3), max(2, rr // 5))
+        if green:
+            ui.text(surf, "GO!", (R.centerx, panel.bottom + int(48 * sz)), int(90 * sz), (80, 255, 120), bold=True,
                     center=True, shadow=True)
 
     def draw_minimap(self, surf):
