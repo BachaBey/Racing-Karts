@@ -247,10 +247,10 @@ class ConnectScene(Scene):
         ui.text(surf, "Register once, then log in", (472, 410), 17, INK_SOFT, bold=True)
         ui.text(surf, "with the same name on any PC.", (472, 432), 17, INK_SOFT, bold=True)
         ui.text(surf, "Controls", (472, 474), 19, INK, bold=True)
-        ui.text(surf, "Drive: WASD / arrows · Item: Space", (472, 500), 16, INK_SOFT, bold=True)
+        ui.text(surf, "Drive: ZQSD / arrows · Item: Space", (472, 500), 16, INK_SOFT, bold=True)
         ui.text(surf, "Network stats: F3", (472, 522), 16, INK_SOFT, bold=True)
         ui.text(surf, "Split-screen on this PC:", (872, 420), 17, INK_SOFT, bold=True)
-        ui.text(surf, "P1  WASD + Space", (872, 448), 18, INK, bold=True)
+        ui.text(surf, "P1  ZQSD + Space", (872, 448), 18, INK, bold=True)
         ui.text(surf, "P2  Arrows + Enter", (872, 474), 18, INK, bold=True)
         self.u2.enabled = self.p2.enabled = self.p2_on.value
         self.draw_widgets(surf)
@@ -438,8 +438,8 @@ class RoomScene(Scene):
             ui.text(surf, f"+ {n_ghosts} ghost opponent(s) replaying saved runs", (536, y + 6), 18, BLUE, bold=True)
             y += 34
         if y < 536:
-            hint = ("Split-screen: P1 = WASD + Space  ·  P2 = Arrows + Enter" if len(self.app.locals) == 2
-                    else "Drive with WASD / arrows  ·  Space = use item  ·  F3 = network stats")
+            hint = ("Split-screen: P1 = ZQSD + Space  ·  P2 = Arrows + Enter" if len(self.app.locals) == 2
+                    else "Drive with ZQSD / arrows  ·  Space = use item  ·  F3 = network stats")
             ui.text(surf, hint, (536, 542), 17, INK_SOFT, bold=True)
         self.draw_widgets(surf)
         status_bar(surf, self.app)

@@ -99,8 +99,8 @@ class RaceScene(Scene):
         self.clock_offset = None
         self.last_snap = None
         self.layout()
-        self.flash("Get ready!  " + ("P1: WASD + Space   P2: Arrows + Enter" if len(self.racers) == 2
-                                     else "Arrows/WASD to drive, Space to use items"), ACCENT2, 4)
+        self.flash("Get ready!  " + ("P1: ZQSD + Space   P2: Arrows + Enter" if len(self.racers) == 2
+                                     else "Arrows/ZQSD to drive, Space to use items"), ACCENT2, 4)
 
     # ------------------------------------------------------------- layout
     def layout(self):

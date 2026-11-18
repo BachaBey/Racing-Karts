@@ -59,10 +59,12 @@ python run_client.py                    # or: python run_client.py --host 192.16
 
 ## 3. Controls
 
+AZERTY layout (ZQSD). On a QWERTY keyboard WASD works too.
+
 | | Solo | Split-screen P1 | Split-screen P2 |
 |---|---|---|---|
-| Accelerate / brake | W/S or ↑/↓ | W / S | ↑ / ↓ |
-| Steer | A/D or ←/→ | A / D | ← / → |
+| Accelerate / brake | Z/S or ↑/↓ | Z / S | ↑ / ↓ |
+| Steer | Q/D or ←/→ | Q / D | ← / → |
 | Use item | Space / Enter | Space / Left Shift | Enter / Right Ctrl |
 
 Other keys: **F3** shows network stats (RTT, UDP loss, packet counts), **Esc twice** leaves the race, **F11** toggles fullscreen.

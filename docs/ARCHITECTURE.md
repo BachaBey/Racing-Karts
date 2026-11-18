@@ -15,7 +15,7 @@ flowchart LR
     subgraph NET["Same Wi-Fi/hotspot (LAN demo)  OR  server on a cloud VM and clients on different networks (bonus)"]
     direction LR
         S["PC 1: SERVER<br/>python run_server.py<br/>TCP :5555  UDP :5556<br/>UDP :5557 (LAN discovery)"]
-        A["PC 2: CLIENT<br/>split-screen<br/>P1 (WASD) + P2 (arrows)<br/>= 2 TCP + 2 UDP sockets"]
+        A["PC 2: CLIENT<br/>split-screen<br/>P1 (ZQSD) + P2 (arrows)<br/>= 2 TCP + 2 UDP sockets"]
         B["PC 3: CLIENT<br/>1 player"]
         C["PC 4: CLIENT<br/>1 player"]
     end

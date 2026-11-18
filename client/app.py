@@ -17,7 +17,8 @@ SETTINGS_PATH = os.path.join(_BASE_DIR, "client_settings.json")
 
 CONTROLS = [
     # P1 (also accepts arrows when playing alone)
-    {"up": [pygame.K_w], "down": [pygame.K_s], "left": [pygame.K_a], "right": [pygame.K_d],
+    # AZERTY ZQSD (Z up, Q left, S down, D right); QWERTY WASD still works for friends
+    {"up": [pygame.K_z, pygame.K_w], "down": [pygame.K_s], "left": [pygame.K_q, pygame.K_a], "right": [pygame.K_d],
      "item": [pygame.K_SPACE, pygame.K_LSHIFT]},
     # P2
     {"up": [pygame.K_UP], "down": [pygame.K_DOWN], "left": [pygame.K_LEFT], "right": [pygame.K_RIGHT],
