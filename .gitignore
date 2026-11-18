@@ -7,3 +7,4 @@ build/
 *.pdf
 selftest.log
 !docs/Networking_Report.pdf
+!docs/How_To_Play.pdf
