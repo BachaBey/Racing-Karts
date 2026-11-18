@@ -422,12 +422,17 @@ class GameServer:
         except OSError as e:
             self.log(f"LAN discovery disabled: {e}")
             return
+        seen_probe = {}
         while self.running:
             try:
                 data, addr = sock.recvfrom(256)
             except OSError:
                 continue
             if data == P.DISCOVERY_REQUEST:
+                now = time.time()
+                if now - seen_probe.get(addr[0], 0) > 30:     # log each source at most every 30 s
+                    seen_probe[addr[0]] = now
+                    self.log(f"LAN discovery probe from {addr[0]} -> answering")
                 with self.lock:
                     online = len(self.by_pid)
                 try:

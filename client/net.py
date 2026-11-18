@@ -7,6 +7,7 @@
 import collections
 import json
 import queue
+import select
 import socket
 import threading
 import time
@@ -224,33 +225,88 @@ class NetClient:
         return 100.0 * self.udp_lost / total if total else 0.0
 
 
-def discover_servers(timeout=1.2):
-    """LAN discovery: broadcast a UDP probe, collect replies from servers on this network."""
-    found = {}
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-    s.settimeout(0.2)
+def local_ipv4s():
+    """Every IPv4 address of this PC (Wi-Fi, Ethernet, hotspot, virtual adapters...)."""
+    ips = set()
     try:
-        for target in ("255.255.255.255", "127.0.0.1"):
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ips.add(info[4][0])
+    except OSError:
+        pass
+    try:   # the address of the default route (no packet is actually sent)
+        t = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        t.connect(("8.8.8.8", 80))
+        ips.add(t.getsockname()[0])
+        t.close()
+    except OSError:
+        pass
+    return sorted(ip for ip in ips if not ip.startswith(("127.", "169.254.")))
+
+
+def discover_servers(timeout=1.5):
+    """LAN discovery, robust version.
+
+    1. A broadcast to 255.255.255.255 leaves through ONE network card only (the one with the
+       lowest route metric, often a VirtualBox/VPN adapter instead of the Wi-Fi). So we send
+       it from a socket BOUND to each local address -> it leaves through every card.
+    2. Many Wi-Fi networks and Windows Firewall drop broadcasts or the replies to them, so we
+       also send a direct (unicast) probe to every address of each local /24 subnet. A unicast
+       reply matches what we sent, so the firewall lets it in.
+    """
+    found = {}
+    socks = []
+    probe = P.DISCOVERY_REQUEST
+    port = C.DISCOVERY_PORT
+
+    def open_sock(bind_ip):
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        if hasattr(socket, "SIO_UDP_CONNRESET"):
+            s.ioctl(socket.SIO_UDP_CONNRESET, False)
+        s.bind((bind_ip, 0))
+        s.setblocking(False)
+        socks.append(s)
+        return s
+
+    def send(s, target):
+        try:
+            s.sendto(probe, (target, port))
+        except OSError:
+            pass
+
+    try:
+        main = open_sock("")
+        send(main, "127.0.0.1")              # a server on this same PC
+        send(main, "255.255.255.255")
+        for ip in local_ipv4s():
             try:
-                s.sendto(P.DISCOVERY_REQUEST, (target, C.DISCOVERY_PORT))
+                s = open_sock(ip)            # bound -> the broadcast leaves through THIS card
             except OSError:
-                pass
+                continue
+            prefix = ip.rsplit(".", 1)[0]
+            send(s, "255.255.255.255")
+            send(s, prefix + ".255")         # directed broadcast of the /24
+            for host in range(1, 255):       # unicast sweep of the /24 (254 tiny datagrams)
+                target = f"{prefix}.{host}"
+                if target != ip:
+                    send(s, target)
         end = time.time() + timeout
         while time.time() < end:
-            try:
-                data, addr = s.recvfrom(1024)
-            except socket.timeout:
-                continue
-            except OSError:
-                break
-            try:
-                info = json.loads(data.decode())
-            except ValueError:
-                continue
-            if info.get("tk") == 1:
-                info["ip"] = addr[0]
-                found[addr[0]] = info
+            ready, _, _ = select.select(socks, [], [], 0.1)
+            for s in ready:
+                try:
+                    data, addr = s.recvfrom(1024)
+                except OSError:
+                    continue
+                try:
+                    info = json.loads(data.decode())
+                except ValueError:
+                    continue
+                if isinstance(info, dict) and info.get("tk") == 1:
+                    info["ip"] = addr[0]
+                    found[addr[0]] = info
     finally:
-        s.close()
-    return list(found.values())
+        for s in socks:
+            s.close()
+    # same server seen on several addresses (e.g. Wi-Fi + VirtualBox): list the LAN one first
+    return sorted(found.values(), key=lambda i: (i["ip"].startswith(("127.", "192.168.56.")), i["ip"]))

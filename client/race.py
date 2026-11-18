@@ -725,7 +725,7 @@ class RaceScene(Scene):
         surf.blit(shade, (0, 0))
         rect = pygame.Rect(0, 0, 820, 520)
         rect.center = (W // 2, H // 2)
-        ui.panel(surf, rect)
+        ui.panel(surf, rect, dark=True)
         ui.text(surf, "RACE RESULTS", (rect.centerx, rect.y + 36), 40, ACCENT, bold=True, center=True)
         ui.text(surf, f"Winner: {self.results['winner']}", (rect.centerx, rect.y + 80), 26, (255, 215, 0), bold=True,
                 center=True)
