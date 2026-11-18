@@ -4,6 +4,7 @@ GAME_NAME = "Turbo Kart Arena"
 PROTOCOL_VERSION = 1
 
 # ---- Network ----------------------------------------------------------------
+DEFAULT_SERVER = "74.148.56.100"   # public cloud server (Azure VM); pre-filled on the login screen
 TCP_PORT = 5555          # reliable control channel (login, lobby, rooms, items, results)
 UDP_PORT = 5556          # real-time channel (kart states / world snapshots)
 DISCOVERY_PORT = 5557    # UDP broadcast LAN server discovery

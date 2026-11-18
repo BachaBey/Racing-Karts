@@ -15,7 +15,7 @@ Architecture, protocol justification and diagrams: **[docs/ARCHITECTURE.md](docs
 
 1. Download **[TurboKartArena.exe](https://github.com/BachaBey/Racing-Karts/raw/main/release/TurboKartArena.exe)** (about 30 MB).
 2. Double-click it. If Windows SmartScreen warns, click **More info → Run anyway**: the app is not code-signed.
-3. Type the server address you were given, a username, and click **LOGIN**.
+3. The server address is pre-filled with our cloud server (**74.148.56.100**, Azure, Austria East). Type a username and click **LOGIN**. To play on a local server instead, type its IP or click **Scan LAN**.
 
 To rebuild the exe yourself: `pip install pyinstaller` then `python tools/build_exe.py`.
 

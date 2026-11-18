@@ -111,7 +111,7 @@ class ConnectScene(Scene):
     def __init__(self, app, error=None):
         super().__init__(app)
         st = app.settings
-        self.host = self.add(TextInput((62, 222, 346, 48), "IP / DNS name [:tcp[:udp]]", value=st.get("host", "127.0.0.1"), max_len=60))
+        self.host = self.add(TextInput((62, 222, 346, 48), "IP / DNS name [:tcp[:udp]]", value=st.get("host", C.DEFAULT_SERVER), max_len=60))
         self.add(Button((62, 286, 180, 48), "SCAN LAN", self.scan, BLUE, 19))
         self.servers = self.add(ListView((62, 350, 346, 200), [("Server", 250), ("On", 60)],
                                          on_select=self.pick_server, row_h=32))
