@@ -13,8 +13,10 @@ set -u
 REPO=https://github.com/BachaBey/Racing-Karts
 VM=kart-server
 # cheapest first; *p* sizes are Arm64 (the server is pure Python, so that works too)
-SIZES="Standard_B1s Standard_B1ms Standard_B2ats_v2 Standard_B2pts_v2 Standard_B2als_v2 Standard_B2s \
-Standard_B2s_v2 Standard_B2as_v2 Standard_B2ps_v2 Standard_D2as_v5 Standard_D2s_v5 Standard_D2as_v6 Standard_D2ads_v5"
+SIZES="Standard_B1s Standard_B1ls Standard_B1ms Standard_B2ats_v2 Standard_B2pts_v2 Standard_B2als_v2 Standard_B2s \
+Standard_B2s_v2 Standard_B2as_v2 Standard_B2ps_v2 Standard_B2pls_v2 Standard_A1_v2 Standard_A2_v2 \
+Standard_D2as_v5 Standard_D2s_v5 Standard_D2ps_v5 Standard_D2pls_v5 Standard_D2as_v6 Standard_D2s_v6 \
+Standard_D2ads_v5 Standard_D2s_v4 Standard_D2as_v4 Standard_D2s_v3 Standard_F2s_v2 Standard_DC1s_v2"
 
 echo "== subscription: $(az account show --query name -o tsv)"
 REGIONS=$(az policy assignment list --query "[].parameters.listOfAllowedLocations.value[]" -o tsv 2>/dev/null | sort -u | tr '\n' ' ')
@@ -33,9 +35,18 @@ runcmd:
 EOF
 
 for R in $REGIONS; do
+  # A size is unusable only if it is restricted for the whole REGION ("Location").
+  # Restrictions of type "Zone" only block some availability zones; we don't use zones.
   AVAIL=$(az vm list-skus -l "$R" --resource-type virtualMachines \
-          --query "[?length(restrictions)==\`0\`].name" -o tsv 2>/dev/null)
-  for S in $SIZES; do
+          --query "[?length(restrictions[?type=='Location'])==\`0\`].name" -o tsv)
+  SMALL=$(echo "$AVAIL" | grep -E '^Standard_(B1|B2|A1_v2|A2_v2|D2|F2s|DC1)' | tr '\n' ' ')
+  echo ""
+  echo "== $R: $(echo "$AVAIL" | grep -c . ) sizes usable; small ones: ${SMALL:-none}"
+  CANDIDATES=""
+  for S in $SIZES; do echo "$AVAIL" | grep -qx "$S" && CANDIDATES="$CANDIDATES $S"; done
+  # fallback: any other small size this region offers
+  for S in $SMALL; do case " $CANDIDATES " in *" $S "*) ;; *) CANDIDATES="$CANDIDATES $S" ;; esac; done
+  for S in $CANDIDATES; do
     echo "$AVAIL" | grep -qx "$S" || continue
     IMG=Canonical:ubuntu-24_04-lts:server:latest
     case "$S" in *B2p*|*D2p*) IMG=Canonical:ubuntu-24_04-lts:server-arm64:latest ;; esac
