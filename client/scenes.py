@@ -111,9 +111,12 @@ class ConnectScene(Scene):
     def __init__(self, app, error=None):
         super().__init__(app)
         st = app.settings
-        self.host = self.add(TextInput((62, 222, 346, 48), "IP / DNS name [:tcp[:udp]]", value=st.get("host", C.DEFAULT_SERVER), max_len=60))
-        self.add(Button((62, 286, 180, 48), "SCAN LAN", self.scan, BLUE, 19))
-        self.servers = self.add(ListView((62, 350, 346, 200), [("Server", 250), ("On", 60)],
+        # where to play: three one-click choices, then the address they fill in (editable)
+        self.add(Button((62, 220, 112, 50), "ONLINE", self.pick_online, GREEN, 18))
+        self.add(Button((180, 220, 102, 50), "LAN", self.scan, BLUE, 18))
+        self.add(Button((288, 220, 120, 50), "THIS PC", self.pick_local, ORANGE, 18))
+        self.host = self.add(TextInput((62, 314, 346, 48), "IP / DNS name [:tcp[:udp]]", value=st.get("host", C.DEFAULT_SERVER), max_len=60))
+        self.servers = self.add(ListView((62, 374, 346, 176), [("LAN server", 250), ("On", 60)],
                                          on_select=self.pick_server, row_h=32))
         self.u1 = self.add(TextInput((472, 222, 336, 48), "username", value=st.get("user1", "")))
         self.p1 = self.add(TextInput((472, 286, 336, 48), "password (empty = guest)", password=True))
@@ -138,6 +141,24 @@ class ConnectScene(Scene):
         def work():
             self.result = ("scan", discover_servers())
         threading.Thread(target=work, daemon=True).start()
+
+    def pick_online(self):
+        self.host.value = C.DEFAULT_SERVER
+        self.flash("Online: our cloud server " + C.DEFAULT_SERVER + " - anyone, from any network", FLASH_OK, 4)
+
+    def pick_local(self):
+        self.host.value = "127.0.0.1"
+        self.flash("This PC: a server running on this computer (run_server.py)", FLASH_INFO, 4)
+
+    def mode_label(self):
+        h = self.host.value.strip().split(":")[0]
+        if h == C.DEFAULT_SERVER:
+            return "ONLINE · CLOUD SERVER", DARK_GREEN
+        if h in ("127.0.0.1", "localhost"):
+            return "THIS PC", ORANGE
+        if h.startswith(("192.168.", "10.", "172.")):
+            return "LAN SERVER", BLUE
+        return "CUSTOM SERVER", INK_SOFT
 
     def pick_server(self, key):
         self.host.value = key
@@ -239,7 +260,10 @@ class ConnectScene(Scene):
     def draw(self, surf):
         ui.background(surf)
         header(surf, "LOGO", "ONLINE MULTIPLAYER RACING", RED)
-        ui.panel(surf, pygame.Rect(40, 152, 390, 420), "SERVER", BLUE)
+        ui.panel(surf, pygame.Rect(40, 152, 390, 420), "WHERE TO PLAY", BLUE)
+        label, col = self.mode_label()
+        ui.text(surf, "Server:", (64, 285), 17, INK_SOFT, bold=True)
+        ui.text(surf, label, (134, 285), 17, col, bold=True)
         ui.panel(surf, pygame.Rect(450, 152, 380, 420), "PLAYER 1", RED)
         ui.panel(surf, pygame.Rect(850, 152, 390, 420), "PLAYER 2", GREEN)
         ui.text(surf, "Leave the password empty to", (472, 352), 17, INK_SOFT, bold=True)
